@@ -1,22 +1,22 @@
 <html>
 
 <head>
-    <h2 style="text-align: center;">Quality of Life by State and City</h2>
+    <h2>Quality of Life and Unemployment by State and County</h2>
+    <div id="instruction">The brighter the color, the happier the state. Click on one to learn more.<br><br></div>
+
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://d3js.org/topojson.v3.min.js"></script>
     <style>
         body {
-            font-family: 'Arial', sans-serif;
+            font-family: "Arial", sans-serif;
         }
     </style>
 </head>
 
-
 <body>
-    <svg height="700" width="1000">
-
-    </svg>
-
+    <svg id="mapSvg" height="700" width="1000"></svg>
+    <svg id="graphSvg" height="350" width="300" style="position: absolute; top: 75px; left: 1000px"></svg>
+    <svg id="textSvg" height="300" widht="300" style="position: absolute; top: 410px; left: 1000px"></svg>
 
     <script>
         const svg = d3.select("svg");
@@ -24,40 +24,477 @@
         const height = +svg.attr("height");
 
         const requestData = async function () {
-
-            const us = await d3.json("counties-albers-10m.json")
+            const us = await d3.json("counties-albers-10m.json");
             //extracted states but you can also extract cities
-            //hi
             var states = topojson.feature(us, us.objects.states);
-            console.log(states);
+            // console.log(states);
             var statesMesh = topojson.mesh(us, us.objects.states);
 
             const StateQOL = await d3.csv("qualityoflifescores.csv");
-            const CityQOL = await d3.csv("QOL(County Level).csv");
+            const CountyQOL = await d3.csv("QOL(County Level).csv");
 
-            const stateExtent = d3.extent(StateQOL, d => d.QualityOfLifeTotalScore);
-            const colorScale = d3.scaleSequential(["gray", "#EFFD5F"]).domain(stateExtent);
 
-            svg.selectAll("path")
-                .data(states.features)
-                .enter().append("path")
-                .attr("d", d3.geoPath())
-                .style("stroke", "white")
-                .style("fill", d => {
-                    const stateName = d.properties.name;
-                    const QOLbyState = new Map(
-                        StateQOL.map((d) => [
-                            d.state,
-                            d.QualityOfLifeTotalScore
-                        ])
-                    );
-                    //console.log(QOLbyState);
-                    const color = colorScale(QOLbyState.get(stateName));
-                    return color;
+            const maxQOLData = StateQOL.reduce(
+                (max, current) =>
+                    current.QualityOfLifeTotalScore > max.QualityOfLifeTotalScore
+                        ? current
+                        : max,
+                { QualityOfLifeTotalScore: -Infinity }
+            );
+            const maxQOLState = maxQOLData.state;
+            const maxQOLScore = maxQOLData.QualityOfLifeTotalScore;
+
+            const stateCountyMap = new Map();
+
+            const stateAbrevMap = new Map([
+                ["AL", "Alabama"],
+                ["AK", "Alaska"],
+                ["AZ", "Arizona"],
+                ["AR", "Arkansas"],
+                ["CA", "California"],
+                ["CO", "Colorado"],
+                ["CT", "Connecticut"],
+                ["DE", "Delaware"],
+                ["FL", "Florida"],
+                ["GA", "Georgia"],
+                ["HI", "Hawaii"],
+                ["ID", "Idaho"],
+                ["IL", "Illinois"],
+                ["IN", "Indiana"],
+                ["IA", "Iowa"],
+                ["KS", "Kansas"],
+                ["KY", "Kentucky"],
+                ["LA", "Louisiana"],
+                ["ME", "Maine"],
+                ["MD", "Maryland"],
+                ["MA", "Massachusetts"],
+                ["MI", "Michigan"],
+                ["MN", "Minnesota"],
+                ["MS", "Mississippi"],
+                ["MO", "Missouri"],
+                ["MT", "Montana"],
+                ["NE", "Nebraska"],
+                ["NV", "Nevada"],
+                ["NH", "New Hampshire"],
+                ["NJ", "New Jersey"],
+                ["NM", "New Mexico"],
+                ["NY", "New York"],
+                ["NC", "North Carolina"],
+                ["ND", "North Dakota"],
+                ["OH", "Ohio"],
+                ["OK", "Oklahoma"],
+                ["OR", "Oregon"],
+                ["PA", "Pennsylvania"],
+                ["RI", "Rhode Island"],
+                ["SC", "South Carolina"],
+                ["SD", "South Dakota"],
+                ["TN", "Tennessee"],
+                ["TX", "Texas"],
+                ["UT", "Utah"],
+                ["VT", "Vermont"],
+                ["VA", "Virginia"],
+                ["WA", "Washington"],
+                ["WV", "West Virginia"],
+                ["WI", "Wisconsin"],
+                ["WY", "Wyoming"],
+            ]);
+
+            CountyQOL.forEach((row) => {
+                const state = stateAbrevMap.get(row.LSTATE);
+                const countyData = {
+                    name: row.NMCNTY,
+                    population: parseInt(row["2022 Population"].replace(/,/g, "")),
+                    unemploymentRate: parseFloat(row.Unemployment.replace("%", "")),
+                };
+
+                if (!stateCountyMap.has(state)) {
+                    stateCountyMap.set(state, []);
+                }
+                stateCountyMap.get(state).push(countyData);
+            });
+
+            function calculateWeightedAverageUnemploymentRate(
+                stateCountyMap,
+                state
+            ) {
+                if (!stateCountyMap.has(state)) {
+                    console.error("State not found in the map.");
+                    return null;
+                }
+
+                const counties = stateCountyMap.get(state);
+                const totalStatePopulation = counties.reduce(
+                    (sum, county) => sum + county.population,
+                    0
+                );
+
+                const weightedUnemploymentSum = counties.reduce((sum, county) => {
+                    const countyWeight = county.population / totalStatePopulation;
+                    return sum + county.unemploymentRate * countyWeight;
+                }, 0);
+
+                return weightedUnemploymentSum;
+            }
+
+            function findStateWithHighestUnemployment(
+                stateCountyMap,
+                stateAbrevMap
+            ) {
+                let highestUnemploymentRate = 0;
+                let stateWithHighestUnemployment = "";
+
+                for (let [abbr, stateName] of stateAbrevMap.entries()) {
+                    const averageUnemploymentRate =
+                        calculateWeightedAverageUnemploymentRate(
+                            stateCountyMap,
+                            stateName
+                        );
+                    if (averageUnemploymentRate > highestUnemploymentRate) {
+                        highestUnemploymentRate = averageUnemploymentRate;
+                        stateWithHighestUnemployment = stateName;
+                    }
+                }
+
+                return {
+                    state: stateWithHighestUnemployment,
+                    unemploymentRate: highestUnemploymentRate,
+                };
+            }
+
+            const stateWithHighestUnemploymentData =
+                findStateWithHighestUnemployment(stateCountyMap, stateAbrevMap);
+
+            const stateExtent = d3.extent(
+                StateQOL,
+                (d) => d.QualityOfLifeTotalScore
+            );
+            const colorScale = d3
+                .scaleSequential(["gray", "#EFFD5F"])
+                .domain(stateExtent);
+
+            async function displayStates() {
+                // clear
+                svg.selectAll("*").remove();
+
+                d3.select("#graphSvg").selectAll("*").remove();
+                d3.select("#textSvg").selectAll("*").remove();
+                //redisplay instructions
+                d3.select("#instruction").style("display", "block");
+
+                //draw states
+                svg
+                    .selectAll("path")
+                    .data(states.features)
+                    .enter()
+                    .append("path")
+                    .attr("d", d3.geoPath())
+                    .style("stroke", "white")
+                    .style("fill", (d) => {
+                        const stateName = d.properties.name;
+                        const QOLbyState = new Map(
+                            StateQOL.map((d) => [d.state, d.QualityOfLifeTotalScore])
+                        );
+                        //console.log(QOLbyState);
+                        const color = colorScale(QOLbyState.get(stateName));
+                        return color;
+                    })
+                    .on("click", function (event, d) {
+                        displayStateCounties(d.id);
+                    });
+            }
+            displayStates();
+
+            function drawGraph(
+                stateQOLScore,
+                stateUnemploymentRate,
+                maxQOLScore,
+                maxQOLState,
+                maxUnemploymentRate,
+                maxUnemploymentState
+            ) {
+                const graphSvg = d3.select("#graphSvg");
+                graphSvg.selectAll("*").remove(); // Clear previous graph
+
+                //remove instructions
+                d3.select("#instruction").style("display", "none");
+
+                const data = [
+                    { label: "QOL Score", value: stateQOLScore },
+                    { label: "Unemployment Rate", value: stateUnemploymentRate },
+                ];
+
+                // Convert values to numbers to ensure toFixed can be called
+                data.forEach((d) => {
+                    d.value =
+                        typeof d.value === "number" ? d.value : parseFloat(d.value);
                 });
+
+                const margin = { top: 20, right: 20, bottom: 30, left: 40 };
+                const width = +graphSvg.attr("width") - margin.left - margin.right;
+                const height = +graphSvg.attr("height") - margin.top - margin.bottom;
+
+                const x = d3.scaleBand().range([0, width]).padding(0.1);
+                const y = d3.scaleLinear().range([height, 0]);
+
+                const g = graphSvg
+                    .append("g")
+                    .attr(
+                        "transform",
+                        "translate(" + margin.left + "," + margin.top + ")"
+                    );
+
+                const maxScore = Math.max(maxQOLScore, maxUnemploymentRate);
+
+                x.domain(data.map((d) => d.label));
+                y.domain([0, maxScore]);
+
+                const bars = g.selectAll(".bar").data(data).enter().append("g");
+
+                bars
+                    .append("rect")
+                    .attr("class", "bar")
+                    .attr("x", (d) => x(d.label))
+                    .attr("width", x.bandwidth())
+                    .attr("y", (d) => y(d.value))
+                    .attr("height", (d) => height - y(d.value))
+                    .style("fill", (d, i) => (i === 0 ? "#EFFD5F" : "gray"));
+
+                bars
+                    .append("text")
+                    .attr("x", (d) => x(d.label) + x.bandwidth() / 2)
+                    .attr("y", (d) => y(d.value) + 12)
+                    .attr("font-size", 13)
+                    .attr("font-weight", "bold")
+                    .attr("text-anchor", "middle")
+                    .text((d) => (isNaN(d.value) ? "N/A" : d.value.toFixed(2))); // Display the value on top of each bar
+
+                g.append("g")
+                    .attr("transform", "translate(0," + height + ")")
+                    .call(d3.axisBottom(x));
+
+                g.append("g").call(d3.axisLeft(y));
+
+                // Add marker for max QOL Score
+                g.append("line")
+                    .attr("x1", x("QOL Score"))
+                    .attr("x2", x("QOL Score") + x.bandwidth())
+                    .attr("y1", y(maxQOLScore))
+                    .attr("y2", y(maxQOLScore))
+                    .attr("stroke", "black")
+                    .style("stroke-dasharray", "3, 3");
+
+                g.append("text")
+                    .attr("x", x("QOL Score") + x.bandwidth() / 2 + 10)
+                    .attr("font-size", 14)
+                    .attr("y", y(maxQOLScore) - 5)
+                    .attr("text-anchor", "middle")
+                    .text(maxQOLState + " (" + maxQOLScore.toFixed(2) + ")");
+
+                // Add marker for max Unemployment Rate
+                g.append("line")
+                    .attr("x1", x("Unemployment Rate"))
+                    .attr("x2", x("Unemployment Rate") + x.bandwidth())
+                    .attr("y1", y(maxUnemploymentRate))
+                    .attr("y2", y(maxUnemploymentRate))
+                    .attr("stroke", "black")
+                    .style("stroke-dasharray", "3, 3");
+
+                g.append("text")
+                    .attr("x", x("Unemployment Rate") + x.bandwidth() / 2)
+                    .attr("y", y(maxUnemploymentRate) - 5)
+                    .attr("text-anchor", "middle")
+                    .attr("font-size", 14)
+                    .text(
+                        maxUnemploymentState + " (" + maxUnemploymentRate.toFixed(2) + ")"
+                    );
+            }
+
+            // convert unemployment to numbers
+            function unemploymentConverter(x) {
+                const out = x.substring(0, x.length - 1);
+                return parseFloat(out);
+            }
+
+            const countyQOLMap = new Map(
+                CountyQOL.map((d) => [d.FIPS, unemploymentConverter(d.Unemployment)])
+            );
+
+            const countyExtent = d3.extent(CountyQOL, (d) =>
+                unemploymentConverter(d.Unemployment)
+            );
+
+            const countyColorScale = d3
+                .scaleSequential(["#EFFD5F", "gray"])
+                .domain(countyExtent); // color scale for all counties in country
+
+            async function displayStateCounties(stateId) {
+
+                const counties = topojson
+                    .feature(us, us.objects.counties)
+                    .features.filter((county) =>
+                        county.id.startsWith(stateId.substring(0, 2))
+                    );
+
+                const countyExtentPerState = d3.extent(counties, (d) =>
+                    countyQOLMap.get(d.id)
+                );
+
+                const countyColorScalePerState = d3
+                    .scaleSequential(["gray", "#EFFD5F"])
+                    .domain(countyExtentPerState); //color scale for all counties in selected state
+
+                // clear
+                svg.selectAll("*").remove();
+                //remove
+
+                const stateFeature = states.features.find((d) => d.id === stateId);
+                const currentState = stateFeature.properties.name;
+                const currentStateQOL = StateQOL.find(
+                    (d) => d.state === currentState
+                ).QualityOfLifeTotalScore;
+
+                const stateAVGUnemploymentRate =
+                    calculateWeightedAverageUnemploymentRate(
+                        stateCountyMap,
+                        currentState
+                    );
+
+                drawGraph(
+                    currentStateQOL,
+                    stateAVGUnemploymentRate,
+                    parseFloat(maxQOLScore),
+                    maxQOLState,
+                    stateWithHighestUnemploymentData.unemploymentRate,
+                    stateWithHighestUnemploymentData.state
+                );
+
+                // add counties
+                let stateCounties = svg
+                    .selectAll("path")
+                    .data(counties)
+                    .enter()
+                    .append("path")
+                    .attr("d", d3.geoPath())
+                    .style("fill", (d) => {
+                        const countyScore = countyQOLMap.get(d.id);
+                        return countyScore ? countyColorScale(countyScore) : "gray"; // can play with color scale (per state or for all country)
+                    });
+
+
+                const svgCenter = [width / 2, height / 2];
+
+                const pathGenerator = d3.geoPath();
+
+                // bounding box for each state
+                const bounds = pathGenerator.bounds(stateFeature);
+                const stateWidth = bounds[1][0] - bounds[0][0];
+                const stateHeight = bounds[1][1] - bounds[0][1];
+
+                // maximize scaling factor
+                const scaleX = width / stateWidth;
+                const scaleY = height / stateHeight;
+                const scaleFactor = Math.min(scaleX, scaleY) * 0.7;
+
+                const centroid = d3.geoPath().centroid(stateFeature);
+
+                // const scaleFactor = 2.5;
+
+                // calculate translation needed to center scaling
+                const translate = [
+                    svgCenter[0] - centroid[0] * scaleFactor,
+                    svgCenter[1] - centroid[1] * scaleFactor,
+                ];
+                let isZoomed = false;
+
+                let zoomedState = svg
+                    .selectAll("path")
+                    .transition()
+                    .duration(500)
+                    .attr(
+                        "transform",
+                        `translate(${translate[0]}, ${translate[1]}) scale(${scaleFactor})`
+                    )
+                    .on('end', function () {
+                        isZoomed = true;
+                        enableMouseOver();
+                    });
+
+                const textSvg = d3.select("#textSvg");
+
+                let titleText = textSvg.append("text")
+                    .attr("class", "title-label")
+                    .style("font-size", "20px")
+                    .style("fill", "black")
+                    .style("font-weight", "bold")
+                    .style("opacity", 1);
+                let subtext1 = textSvg.append("text")
+                    .style("font-size", "16px")
+                    .style("fill", "black")
+                    .style("opacity", 1);
+                let subtext2 = textSvg.append("text")
+                    .style("font-size", "16px")
+                    .style("fill", "black");
+                let percentage = textSvg.append("text")
+                    .style("font-size", "24px")
+                    .style("font-weight", "bold")
+                    .style("fill", "#0066b2");
+
+                function enableMouseOver() {
+                    stateCounties.on('mouseover', function () {
+                        if (isZoomed) {
+                            d3.select(this)
+                                .transition().duration(100)
+                                .style("stroke", "white");
+
+                            let county = d3.select(this).datum().properties.name;
+                            let countyUnemp = countyQOLMap.get(d3.select(this).datum().id);
+                            console.log(countyUnemp);
+
+                            let xAnchor = 10;
+                            let yAnchor = 50;
+                            titleText.text(county)
+                                .attr('x', xAnchor)
+                                .attr('y', yAnchor);
+                            subtext1.text("has an unemployment rate of ")
+                                .attr('x', xAnchor)
+                                .attr('y', yAnchor + 30);
+                            percentage.text(countyUnemp)
+                                .attr('x', xAnchor)
+                                .attr('y', yAnchor + 58);
+                            subtext2.text("compared to the state average of " + stateAVGUnemploymentRate.toFixed(2))
+                                .attr('x', xAnchor)
+                                .attr('y', yAnchor + 78);
+
+                        }
+                    });
+
+                    stateCounties.on('mouseout', function () {
+                        if (isZoomed) {
+                            d3.select(this)
+                                .transition().duration(100)
+                                .style("stroke", "none");
+                        }
+                    });
+                }
+
+
+                // go back
+                svg
+                    .append("text")
+                    .attr("x", 25)
+                    .attr("y", 30)
+                    .text("X")
+                    .style("cursor", "pointer")
+                    .on("click", function () {
+                        displayStates();
+
+                    });
+            }
         };
 
+
         requestData();
+
     </script>
 
 </body>

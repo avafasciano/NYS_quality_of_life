@@ -1,0 +1,65 @@
+<html>
+
+<head>
+    <h2 style="text-align: center;">Quality of Life by State and City</h2>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://d3js.org/topojson.v3.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+        }
+    </style>
+</head>
+
+
+<body>
+    <svg height="700" width="1000">
+
+    </svg>
+
+
+    <script>
+        const svg = d3.select("svg");
+        const width = +svg.attr("width");
+        const height = +svg.attr("height");
+
+        const requestData = async function () {
+
+            const us = await d3.json("counties-albers-10m.json")
+            //extracted states but you can also extract cities
+            //hi
+            var states = topojson.feature(us, us.objects.states);
+            console.log(states);
+            var statesMesh = topojson.mesh(us, us.objects.states);
+
+            const StateQOL = await d3.csv("qualityoflifescores.csv");
+            const CityQOL = await d3.csv("QOL(County Level).csv");
+
+            const stateExtent = d3.extent(StateQOL, d => d.QualityOfLifeTotalScore);
+            const colorScale = d3.scaleSequential(["gray", "#EFFD5F"]).domain(stateExtent);
+
+            svg.selectAll("path")
+                .data(states.features)
+                .enter().append("path")
+                .attr("d", d3.geoPath())
+                .style("stroke", "white")
+                .style("fill", d => {
+                    const stateName = d.properties.name;
+                    const QOLbyState = new Map(
+                        StateQOL.map((d) => [
+                            d.state,
+                            d.QualityOfLifeTotalScore
+                        ])
+                    );
+                    //console.log(QOLbyState);
+                    const color = colorScale(QOLbyState.get(stateName));
+                    return color;
+                });
+        };
+
+        requestData();
+    </script>
+
+</body>
+
+</html>
